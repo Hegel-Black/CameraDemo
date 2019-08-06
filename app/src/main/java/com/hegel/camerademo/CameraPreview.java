@@ -62,23 +62,24 @@ public class CameraPreview extends SurfaceView implements SurfaceHolder.Callback
             // preview surface does not exist
             return;
         }
+        if (mCamera != null) {
+            // stop preview before making changes
+            mCamera.stopPreview();
 
-        // stop preview before making changes
-        mCamera.stopPreview();
+            // set preview size and make any resize, rotate or
+            // reformatting changes here
+            Camera.Parameters para = mCamera.getParameters();
+            para.setPreviewSize(720, 720);
+            para.setPictureSize(1280, 720);
+            mCamera.setParameters(para);
 
-        // set preview size and make any resize, rotate or
-        // reformatting changes here
-        Camera.Parameters para = mCamera.getParameters();
-        para.setPreviewSize(720, 720);
-        para.setPictureSize(1280, 720);
-        mCamera.setParameters(para);
-
-        // start preview with new settings
-        try {
-            mCamera.setPreviewDisplay(holder);
-            mCamera.startPreview();
-        } catch (IOException e) {
-            Log.d(TAG, "Error starting camera preview: " + e.getMessage());
+            // start preview with new settings
+            try {
+                mCamera.setPreviewDisplay(holder);
+                mCamera.startPreview();
+            } catch (IOException e) {
+                Log.d(TAG, "Error starting camera preview: " + e.getMessage());
+            }
         }
     }
 }

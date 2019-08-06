@@ -1,17 +1,22 @@
 package com.hegel.camerademo;
 
+import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.hardware.Camera;
 import android.media.CamcorderProfile;
 import android.media.MediaRecorder;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
+import android.support.v4.app.ActivityCompat;
+import android.support.v7.app.AppCompatActivity;
 import android.util.Log;
+import android.view.OrientationEventListener;
+import android.view.Surface;
 import android.view.View;
-import android.view.Window;
-import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.TextView;
@@ -24,19 +29,19 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.List;
 
-public class MainActivity extends Activity implements View.OnClickListener {
+public class MainActivity extends AppCompatActivity implements View.OnClickListener {
     private static final String TAG = "Hegel-MainActivity";
+    private OrientationEventListener mOrientationEventListener;
     private FrameLayout mPreviewArea;
     private CameraPreview mPreview;
     private Camera mCamera;
     private MediaRecorder mediaRecorder;
     private boolean isRecording = false;
     private File recordingFile;
-    private int currentRotation = 90;
     private int currentCameraId = 0;
     private int maxCameraCount = 0;
 
-    private Button btn1, btn2, btn3, btn4;
+    private Button btn1, btn2, btn3;
     private TextView pathText;
 
 
@@ -57,13 +62,32 @@ public class MainActivity extends Activity implements View.OnClickListener {
         btn2.setOnClickListener(this);
         btn3 = findViewById(R.id.btn3);
         btn3.setOnClickListener(this);
-        btn4 = findViewById(R.id.btn4);
-        btn4.setOnClickListener(this);
 
         pathText = findViewById(R.id.pathText);
 
         maxCameraCount = Camera.getNumberOfCameras();
         Log.d(TAG, "maxCameraCount = " + maxCameraCount);
+
+        mOrientationEventListener = new OrientationEventListener(this) {
+            @Override
+            public void onOrientationChanged(int orientation) {
+                if (orientation == ORIENTATION_UNKNOWN) return;
+                Camera.CameraInfo info = new Camera.CameraInfo();
+                Camera.getCameraInfo(currentCameraId, info);
+                orientation = (orientation + 45) / 90 * 90;
+                int rotation = 0;
+                if (info.facing == Camera.CameraInfo.CAMERA_FACING_FRONT) {
+                    rotation = (info.orientation - orientation + 360) % 360;
+                } else {  // back-facing camera
+                    rotation = (info.orientation + orientation) % 360;
+                }
+                if (mCamera != null) {
+                    Camera.Parameters mParameters = mCamera.getParameters();
+                    mParameters.setRotation(rotation);
+                    mCamera.setParameters(mParameters);
+                }
+            }
+        };
     }
 
     @Override
@@ -72,7 +96,8 @@ public class MainActivity extends Activity implements View.OnClickListener {
         Log.i(TAG, "onResume()");
         // Create an instance of Camera
         if (safeCameraOpen(currentCameraId)) {
-            rotateCamera(currentRotation);
+            mOrientationEventListener.enable();
+            setCameraDisplayOrientation(this, currentCameraId, mCamera);
             mPreview.setCamera(mCamera);
             // 防止息屏后再进入时，预览停止
             try {
@@ -88,9 +113,12 @@ public class MainActivity extends Activity implements View.OnClickListener {
     protected void onPause() {
         super.onPause();
         Log.i(TAG, "onPause()");
-        mCamera.stopPreview();
-        releaseMediaRecorder();
-        releaseCameraAndPreview();
+        mOrientationEventListener.disable();
+        if (mCamera != null) {
+            mCamera.stopPreview();
+            releaseMediaRecorder();
+            releaseCameraAndPreview();
+        }
     }
 
     @Override
@@ -115,20 +143,17 @@ public class MainActivity extends Activity implements View.OnClickListener {
                 switchCamera(getNextCamera());
                 break;
             case R.id.btn3:
-                rotateCamera(getNextRotation());
-                break;
-            case R.id.btn4:
                 if (isRecording) {
                     mediaRecorder.stop();
                     releaseMediaRecorder();
-                    btn4.setText("Record");
+                    btn3.setText("Record");
                     isRecording = false;
                     pathText.setText(recordingFile.getAbsolutePath());
                     notifyMediaScanner(recordingFile);
                 } else {
                     if (prepareVideoRecorder()) {
                         mediaRecorder.start();
-                        btn4.setText("Stop");
+                        btn3.setText("Stop");
                         isRecording = true;
                     }
                 }
@@ -227,11 +252,27 @@ public class MainActivity extends Activity implements View.OnClickListener {
         }
     };
 
+    private void requestCameraPermission() {
+        if (ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.CAMERA)) {
+            AlertDialog.Builder builder = new AlertDialog.Builder(this)
+                    .setMessage("此应用需要获取访问摄像头的权限，请授予！")
+                    .setPositiveButton("确认", (dialog, which) -> ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.CAMERA}, 1))
+                    .setNegativeButton("取消", (dialog, which) -> finish());
+            builder.show();
+        } else {
+            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.CAMERA}, 1);
+        }
+    }
+
     /**
      * A safe way to get an instance of the Camera object.
      */
-
     private boolean safeCameraOpen(int id) {
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+                != PackageManager.PERMISSION_GRANTED) {
+            requestCameraPermission();
+            return false;
+        }
         boolean qOpened = false;
 
         try {
@@ -263,19 +304,34 @@ public class MainActivity extends Activity implements View.OnClickListener {
         }
     }
 
-    private void rotateCamera(int rotation) {
-        if (mCamera != null) {
-            mCamera.setDisplayOrientation(rotation);
+    private static void setCameraDisplayOrientation(Activity activity, int cameraId, Camera camera) {
+        Camera.CameraInfo info = new Camera.CameraInfo();
+        Camera.getCameraInfo(cameraId, info);
+        int rotation = activity.getWindowManager().getDefaultDisplay().getRotation();
+        int degrees = 0;
+        switch (rotation) {
+            case Surface.ROTATION_0:
+                degrees = 0;
+                break;
+            case Surface.ROTATION_90:
+                degrees = 90;
+                break;
+            case Surface.ROTATION_180:
+                degrees = 180;
+                break;
+            case Surface.ROTATION_270:
+                degrees = 270;
+                break;
         }
-    }
 
-    private int getNextRotation() {
-        if (currentRotation == 270) {
-            currentRotation = 0;
-        } else {
-            currentRotation += 90;
+        int result;
+        if (info.facing == Camera.CameraInfo.CAMERA_FACING_FRONT) {
+            result = (info.orientation + degrees) % 360;
+            result = (360 - result) % 360;  // compensate the mirror
+        } else {  // back-facing
+            result = (info.orientation - degrees + 360) % 360;
         }
-        return currentRotation;
+        camera.setDisplayOrientation(result);
     }
 
     private int getNextCamera() {
@@ -295,7 +351,7 @@ public class MainActivity extends Activity implements View.OnClickListener {
 //            printCameraSize("PreviewSizes", mCamera.getParameters().getSupportedPreviewSizes());
 //            printCameraSize("PictureSizes", mCamera.getParameters().getSupportedPictureSizes());
 //            printPreviewFpsRange("PreviewFpsRange", mCamera.getParameters().getSupportedPreviewFpsRange());
-            rotateCamera(currentRotation);
+            setCameraDisplayOrientation(this, currentCameraId, mCamera);
             setCustomSize();
             mPreview.setCamera(mCamera);
             try {
